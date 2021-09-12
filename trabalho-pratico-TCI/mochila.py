@@ -9,92 +9,188 @@ import pandas as pd
 import pyomo.environ as pyo
 from pyomo.environ import *
 from pyomo.opt import SolverFactory
+import time
 import csv
+import sys
 
+# imprime o arquivo resumido de desempenho
+def imprime_resumo(resultado):
+    
+    resumo = entradas
+    #resumo = entradas.replace('.txt', '.out')
+    
+
+    with open('resumo.csv', mode = 'w', newline = '') as csv_file:
+        colunas = ['instance', 'gerador', 'tempo', 'LB', 'UB', 'status']
+        escrever = csv.DictWriter(csv_file, fieldnames = colunas)
+        
+        # Escreve o cabeçalho
+        #escrever.writeheader()
+        
+        # Escreve os dados       
+        escrever.writerow({'instance': resumo,
+                           'gerador': gerador,
+                           'tempo': resultado.Solver.Time,
+                           'LB': resultado.Problem.lower_bound,
+                           'UB': resultado.Problem.upper_bound})
+        
 
 # Imprime os resultados obtidos
-def imprime (produtos, mochilas, model, x):
-    saida = open('saida.txt', 'w')
-    saida.write('{}\t {}'.format(model.obj(), j))
-    print("{:.2f} \t {}".format(model.obj(), j))
-    for m in mochilas.id:
-        itens = []
-        for p in produtos.id:
-            if(pyo.value(x[m, p] > 0)):
-                itens.append(p + 1)
-          
-        saida.write('\n{} \t {}'.format(m + 1, len(itens)))
-        print("{} \t {}".format(m + 1, len(itens)))
-        for i in range(len(itens)):
-            saida.write('\n{}'.format(itens[i]))
-            print(itens[i])
- 
-
-# resolve o modelo
-def resolve(model, produtos, mochilas, x, m, p, i, j, gerador):
+def imprime_saida (itens, mochilas, model): 
+       
+    x = model.x
+    M = model.M
+    I = model.I
     
-    # limita o somatório do peso dos itens a capacidade total de cada mochila
-    model.C1 = pyo.ConstraintList()
-    for m in mochilas.id:
-        model.C1.add(expr = sum(x[m, p] * produtos.peso[p] for p in produtos.id) <= mochilas.carga_maxima[m])
+    saida = entradas.replace('.txt', '.sol')
+    
+    saida = open(saida, 'w')
+    saida.write('{:.2f} \t {}'.format(model.obj(), len(M)))
+    #print("{:.2f} \t {}".format(model.obj(), len(M)))
+    for M in mochilas.index:
+        itens_por_mochila = []
+        for I in itens.index:
+            if(pyo.value(x[M, I] > 0)):
+                itens_por_mochila.append(itens.id[I])                
+        saida.write('\nMochila {} \t {}\n'.format(mochilas.id[M], len(itens_por_mochila)))
+        #print("{} \t {}".format(mochilas.id[M], len(itens_por_mochila)))
         
-    # determina que cada item só pode ser levado em apenas uma das mochilas
-    model.C2 = pyo.ConstraintList()
-    for p in produtos.id:
-        model.C2.add(expr = sum(x[m, p] for m in mochilas.id) <= 1)    
-        
-    # define a função objetivo para maximizar o valor total levado    
-    model.obj = pyo.Objective(expr = sum(x[m,p] * produtos.valor[p] for p in produtos.id for m in mochilas.id ), sense = pyo.maximize) 
-        
-    # imprime toda a construção do modelo
-    # model.pprint()
-        
-    # define o solver a ser utilizado na otimização, neste caso, o GLPK
+        for i in range(len(itens_por_mochila)):
+            saida.write('{} \t'.format(itens_por_mochila[i]))
+            #print(itens_por_mochila[i])   
+    
+def resolve(model, itens, mochilas):
+    x = model.x
+    M = model.M
+    I = model.I
+    
+    model.obj = pyo.Objective(expr = sum(x[M, I] * itens.valor[I] for I in itens.index for M in mochilas.index ), sense = pyo.maximize)
+    
     opt = SolverFactory('glpk')
-    result = opt.solve(model)
+    resultado = opt.solve(model)
     
-    # imprime os resultados 
-    imprime(produtos, mochilas, model, x)
+    #print(resultado)
+    #print(resultado.Solver.Time)
     
-    #teste csv 
+    # Imprime o resultado
+    print("\n==================================================")
+    print("Valor total em todas as mochilas {}".format(model.obj()))
+    print("===================================================")
+    
+    imprime_saida(itens, mochilas, model)
+    imprime_resumo(resultado)
 
-
+########## INICIO DA LEITURA DOS DADOS ##########
 # importação dos dados de entrada
-produtos = pd.read_excel('mochila_multipla.xlsx', sheet_name = 'elementos')
-mochilas = pd.read_excel('mochila_multipla.xlsx', sheet_name = 'mochila')
 
+entradas = sys.argv[1]
+gerador = int(sys.argv[2])
+
+arquivo = open (entradas, "r", encoding="utf-8")
+i = 0
+j = 1
+capacidades = []
+ids_mochilas = []
+ids_itens = []
+peso_itens = []
+valor_itens = []
+
+
+for linha in arquivo:
+   inputs = linha.split()
+   if i == 0:
+        qnt_mochilas = int(inputs[1])
+        qnt_itens = int(inputs[0])
+        i += 1
+        
+   elif i <= qnt_mochilas:
+       capacidades.append(inputs)
+       ids_mochilas.append(i)
+       i += 1      
+
+   elif j <= qnt_itens:
+       peso_itens.append(inputs[1])
+       valor_itens.append(inputs[2])
+       ids_itens.append(j)
+       j += 1
+       i += 1     
+
+mochilas = pd.DataFrame(capacidades, columns = ['capacidade'])
+mochilas['id'] = ids_mochilas
+mochilas[['capacidade']] = mochilas[['capacidade']].apply(pd.to_numeric)
+
+mochilas = mochilas[['id', 'capacidade']]
+
+itens = pd.DataFrame(peso_itens, columns = ['peso'])
+itens['valor'] = valor_itens
+itens['id'] = ids_itens
+
+# Altera toda as virgulas por ponto, para que seja possível a conversão para números
+for l in itens.index:
+    itens['peso'][l] = itens['peso'][l].replace(",", ".")
+ 
+# Altera todas as colunas do DataFrame de string para númerica    
+itens = itens.apply(pd.to_numeric)
+
+########## FIM DA LEITURA DAS ENTRADAS ###########
+
+########## CONSTRUÇÃO DO MODELO ############
 # quantidade de itens e mochilas
 j = len(mochilas)
-i = len(produtos)
+i = len(itens)
 
 # criação do modelo
-model_relaxacao = pyo.ConcreteModel()
-model_branch_and_bound = pyo.ConcreteModel()
+model = pyo.ConcreteModel()
 
 # guarda a quantidade de mochilas da base de dados
-model_relaxacao.m = range(j)
-m = model_relaxacao.m
+model.M = range(j)
+M = model.M
 
-# quarda a quantidade de itens da base de dados
-model_relaxacao.p = range(i)
-p = model_relaxacao.p
+# guarda a quantidade de itens da base de dados
+model.I = range(i)
+I = model.I
 
-# determina a variável de decisão com seus respectivos limites 
-# Agorítmo com relaxação linear   
-gerador = 1
-model_relaxacao.x = pyo.Var(m, p, bounds = (0, 1))
-x = model_relaxacao.x
-resolve(model_relaxacao, produtos, mochilas, x, m, p, i, j, gerador)
+##### VARIÁVEL DE DECISÃO #########
+if gerador == 1:
+    model.x = pyo.Var(M, I, bounds = (0,1))
+    x = model.x
 
-# determina a variável de decisão com seus respectivos limites  
-# Algorítimo exato branch_and_bound  
-gerador = 2
-model_branch_and_bound.x = pyo.Var(m, p, within = Binary)
-x = model_branch_and_bound.x
-resolve(model_branch_and_bound, produtos, mochilas, x, m, p, i, j, gerador)
+else:    
+    model.x = pyo.Var(M, I, within = Binary)
+    x = model.x
 
 
+###### RESTRIÇÕES ########
+# limita o somatório do peso dos itens a capacidade total de cada mochila
+model.C1 = pyo.ConstraintList()
 
+for M in mochilas.index:
+    model.C1.add(expr = sum(x[M, I] * itens.peso[I] for I in itens.index) <= mochilas.capacidade[M])
+
+# determina que cada item só pode ser levado em apenas uma das mochilas    
+model.C2 = pyo.ConstraintList()
+
+for I in itens.index:
+    model.C2.add(expr = sum(x[M, I] for M in mochilas.index) <= 1)
+
+# 1 - resolve o algorítmo com relaxação linear
+# 2 - resolve o algorítimo branch-and-bound (solução ótima)
+if (gerador == 1) or (gerador == 2) : 
+    resolve(model, itens, mochilas)
+
+# Resove o algorítimo da Heuristica 1
+elif gerador == 3:
+    print("Hurística 1: \n AINDA NÃO IMPLEMENTADA")
+    
+# Resove o algorítimo da Heuristica 2
+elif gerador == 4:
+    print("Hurística 2: \n AINDA NÃO IMPLEMENTADA")
+    
+else:
+    print("GERADOR INESISTENTE")
+    
+
+#model.pprint()
 
         
 
