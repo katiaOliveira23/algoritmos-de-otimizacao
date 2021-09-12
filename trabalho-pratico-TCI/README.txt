@@ -1,6 +1,6 @@
 Para executar o programa na pasta onde salvou os arquivos digite:
 
-python mochila.py testes\t25-5-1000-2-s-2 1
+python mochila.py testes\t25-5-1000-2-s-2.txt 1
 
 ONDE:
 	mochila.py -> contém o código implementado
